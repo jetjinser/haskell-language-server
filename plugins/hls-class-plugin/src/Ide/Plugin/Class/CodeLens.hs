@@ -1,6 +1,7 @@
 {-# LANGUAGE GADTs           #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE ViewPatterns    #-}
+
 module Ide.Plugin.Class.CodeLens where
 
 import           Control.Lens                         ((&), (?~), (^.))
@@ -9,7 +10,12 @@ import           Data.Aeson                           hiding (Null)
 import qualified Data.IntMap.Strict                   as IntMap
 import           Data.Maybe                           (mapMaybe, maybeToList)
 import qualified Data.Text                            as T
-import           Development.IDE
+import           Development.IDE                      (GhcSession (GhcSession),
+                                                       HscEnvEq (hscEnv),
+                                                       IdeState, Range (..),
+                                                       TcModuleResult (tmrTypechecked),
+                                                       TypeCheck (TypeCheck),
+                                                       printOutputable)
 import           Development.IDE.Core.PluginUtils
 import           Development.IDE.Core.PositionMapping
 import           Development.IDE.GHC.Compat
@@ -22,8 +28,36 @@ import           Ide.PluginUtils
 import           Ide.Types
 import qualified Language.LSP.Protocol.Lens           as L
 import           Language.LSP.Protocol.Message
-import           Language.LSP.Protocol.Types
+import           Language.LSP.Protocol.Types          (ApplyWorkspaceEditParams (ApplyWorkspaceEditParams),
+                                                       CodeLens (CodeLens),
+                                                       InlayHint (..),
+                                                       Null (..),
+                                                       TextEdit (TextEdit),
+                                                       WorkspaceEdit (..),
+                                                       type (|?) (InL, InR))
 import           Language.LSP.Server                  (sendRequest)
+
+inlayHints :: PluginMethodHandler IdeState Method_TextDocumentInlayHint
+inlayHints state _plId clp = do
+    nfp <- getNormalizedFilePathE $ clp ^. L.textDocument . L.uri
+    (InstanceBindLensResult (InstanceBindLens{lensRange, lensDetails}), pm)
+        <- runActionE "classplugin.GetInstanceBindLens" state $ useWithStaleE GetInstanceBindLens nfp
+    (tmrTypechecked -> gblEnv, _) <- runActionE "classplugin.codeAction.TypeCheck" state $ useWithStaleE TypeCheck nfp
+    (hscEnv -> hsc, _) <- runActionE "classplugin.codeAction.GhcSession" state $ useWithStaleE GhcSession nfp
+    pure $ InL $ mapMaybe (toInlayHints lensDetails hsc gblEnv pm) lensRange
+    where toInlayHints lds hsc gblEnv pm (range, int) = (\(_, _, typ) ->
+            let newRange = toCurrentRange pm range
+                title = ":: " <> T.pack (showDoc hsc gblEnv typ)
+            in (\Range{_start=_,_end=end} -> InlayHint {
+                  _position = end
+                , _label = InL title
+                , _kind = Nothing
+                , _textEdits = Nothing
+                , _tooltip = Nothing
+                , _paddingLeft = Just True
+                , _paddingRight = Nothing
+                , _data_ = Nothing
+                }) <$> newRange) =<< IntMap.lookup int lds
 
 -- The code lens method is only responsible for providing the ranges of the code
 -- lenses matched to a unique id
@@ -91,7 +125,3 @@ codeLensCommandHandler plId state _ InstanceBindLensCommand{commandUri, commandE
                 (pure [(commandUri, commandEdit : pragmaInsertion)])
                 Nothing
                 Nothing
-
-
-
-

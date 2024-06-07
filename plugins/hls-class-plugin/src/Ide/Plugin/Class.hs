@@ -14,6 +14,7 @@ descriptor recorder plId = (defaultPluginDescriptor plId "Provides code actions 
     , pluginHandlers = mkPluginHandler SMethod_TextDocumentCodeAction (codeAction recorder)
         <> mkPluginHandler SMethod_TextDocumentCodeLens codeLens
         <> mkResolveHandler SMethod_CodeLensResolve codeLensResolve
+        <> mkPluginHandler SMethod_TextDocumentInlayHint inlayHints
     }
 
 commands :: PluginId -> [PluginCommand IdeState]
